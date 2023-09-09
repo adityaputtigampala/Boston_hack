@@ -1,58 +1,114 @@
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-pragma solidity >=0.7.0 <0.9.0;
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC721/ERC721.sol";
 
-/**
- * @title Storage
- * @dev Store & retrieve value in a variable
- * @custom:dev-run-script ./scripts/deploy_with_ethers.ts
- */
-contract Storage is ERC721{
+contract InsuranceNFT is ERC721 {
+    event InsuranceActive(uint256 indexed tokenId);
+    event InsuranceCreated(uint256 indexed tokenId, uint256 premium);
 
     struct Person {
-        string name; //name of the policy purchaser 
-        uint256 SSN; //SSN of the policy purchaser
-        uint256 age; // age of the policy purchaser
-        uint256 premiumAmount; //policy premium paid out by the policy purchaser
-        address policyHolderAddress; //address of the policyholder
-        address beneficiaryHolderAddress; //address of the beneficiary
-        uint256 riskFactorRating; //rating based on the health riskiness of the policy holder 
-
-
-    }
-    
-    Person p ;
-    uint256 tokenID;
-    mapping (uint256=>string) public tokenToUserName;
-    constructor(string memory _name,string memory _symbol, address memory _policyInsurerAddress, uint256 memory _policyPayout) ERC721(_name,_symbol, _policyInsurerAddress, _policyPayout){
-        tokenID = 0;
+        string name;
+        string ssn;
+        uint8 riskFactor;
+        uint256 premium;
+        address owner;
+        address beneficary;
+        bool active;
+        bool ended;
+        uint256 startTime;
     }
 
-    function personConstructor(string _name, uint256 _SSN, uint256 _age, uint256 _premiumAmount, address _policyHolderAddress, address _beneficiaryHolderAddress, uint256 _riskFactorRating ) private {
-        p.name = _name;
-        p.SSN = _SSN; 
-        p.age = _age;
-        p.premiumAmount = _premiumAmount;
-        p.policyHolderAddress = _policyHolderAddress;
-        p.beneficiaryHolderAddress = _beneficiaryHolderAddress;
-        p.riskFactorRating = _riskFactorRating;
+    uint256 public TIME_PERIOD = 365 days;
+    uint256 public TOTAL_PAY = 5 gwei;
+
+    address admin;
+    mapping(uint256 => Person) public tokenToPerson;
+    uint256 private s_tokenCounter;
+
+    constructor() ERC721("Insurance NFT", "INFT") {
+        admin = msg.sender;
+        s_tokenCounter = 0;
+    }
+
+    function requestNft(
+        string memory _name,
+        string memory _ssn,
+        address _beneficary
+    ) public payable {
+        _safeMint(admin, s_tokenCounter);
+        tokenToPerson[s_tokenCounter].name = _name;
+        tokenToPerson[s_tokenCounter].ssn = _ssn;
+        tokenToPerson[s_tokenCounter].beneficary = _beneficary;
+        tokenToPerson[s_tokenCounter].riskFactor = 50; // fetch from somewhere
+        tokenToPerson[s_tokenCounter].owner = msg.sender;
+        tokenToPerson[s_tokenCounter].active = false;
+        tokenToPerson[s_tokenCounter].ended = false;
+
+        emit InsuranceCreated(
+            s_tokenCounter,
+            tokenToPerson[s_tokenCounter].premium
+        );
+        s_tokenCounter = s_tokenCounter + 1;
+    }
+
+    function buyInsurance(uint256 tokenId) public payable {
+        require(msg.value >= TOTAL_PAY, "Insufficient Funds");
         
-
+        safeTransferFrom(admin, msg.sender, tokenId);
     }
 
-    //  _safeMint(address to, uint256 tokenId)
-    function mintNFT(string memory userName) public {
-        _safeMint(msg.sender,tokenID);
-        tokenToUserName[tokenID] = userName;
-        tokenID = tokenID+1;
+    function getRiskFactor(uint256 tokenId) external view returns (uint256) {
+        return tokenToPerson[tokenId].riskFactor;
     }
 
-    function payPremium(uint256 _premiumAmount, address _policyInsurerAddress) public {
-        if (tokenToUserName[tokenID].policyHolderAddress != msg.sender) {
-            revert("invalid sender"); 
+    function getPremium(uint256 tokenId) external view returns (uint256) {
+        return tokenToPerson[tokenId].premium;
+    }
+
+    function payPremium(uint256 tokenId)
+        external
+        payable
+        isNotEnded(tokenId)
+        isInsuranceHolder(tokenId)
+    {
+        require(
+            msg.value >= tokenToPerson[tokenId].premium,
+            "Insufficient Funds"
+        );
+
+        if (!tokenToPerson[tokenId].active) {
+            tokenToPerson[tokenId].active = true;
+            emit InsuranceActive(tokenId);
         }
-        
     }
 
+    function declareDeadGetPay(uint256 tokenId)
+        external
+        isActive(tokenId)
+        isNotEnded(tokenId)
+    {
+        require(
+            tokenToPerson[tokenId].beneficary == msg.sender,
+            "invalid sender"
+        );
+        tokenToPerson[tokenId].ended = true;
+
+        (bool sent, ) = msg.sender.call{value: TOTAL_PAY}("eth sent");
+        require(sent, "Failed to send Ether");
+    }
+
+    modifier isActive(uint256 tokenId) {
+        require(tokenToPerson[tokenId].active, "Insurance is not active");
+        _;
+    }
+    modifier isNotEnded(uint256 tokenId) {
+        require(!tokenToPerson[tokenId].ended, "Insurance ended");
+        _;
+    }
+
+    modifier isInsuranceHolder(uint256 tokenId) {
+        require(tokenToPerson[tokenId].owner == msg.sender, "Is not insurance holder");
+        _;
+    }
 }
